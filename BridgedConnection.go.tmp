@@ -1,0 +1,149 @@
+﻿package main
+
+type ConnectionType byte
+
+const(
+    ClientBridge ConnectionType = 0x00
+    BridgeSQL ConnectionType = 0x01
+)
+
+type BridgedConnection struct {
+    BridgeAcceptor BridgeAcceptor
+    SocketCouple SocketCouple
+}
+
+func newBridgedConnection(BridgeAcceptor BridgeAcceptor, SocketCouple SocketCouple) BridgedConnection {
+    bc := new(BridgedConnection)
+    this.BridgeAcceptor = BridgeAcceptor
+    this.SocketCouple = SocketCouple
+    return bc
+}
+
+func (bc BridgedConnection) String() string {
+    Thread tIn = new Thread(new ThreadStart(ClientBridgeThread));
+    tIn.IsBackground = true;
+    tIn.Start();
+
+    Thread tOut = new Thread(new ThreadStart(BridgeSQLThread));
+    tOut.IsBackground = true;
+    tOut.Start();
+}
+
+func (bc BridgedConnection) ClientBridgeThread() {
+    try
+    {
+        byte[] bBuffer = null;
+        byte[] bHeader = new byte[Header.TDSHeader.HEADER_SIZE];
+        int iReceived = 0;
+
+        TDSMessage tdsMessage = null;
+
+        while ((iReceived = SocketCouple.ClientBridgeSocket.Receive(bHeader, Header.TDSHeader.HEADER_SIZE, SocketFlags.None)) > 0)
+        //while ((iReceived = sc.InputSocket.Receive(bBuffer, SocketFlags.None)) > 0)
+        {
+            TDSHeader header = new TDSHeader(bHeader);
+
+            int iMinBufferSize = Math.Max(0x1000, header.LengthIncludingHeader + 1);
+            if ((bBuffer == null) || (bBuffer.Length < iMinBufferSize)) {
+                bBuffer = new byte[iMinBufferSize];
+            }
+
+            //Console.WriteLine(header.Type);
+
+            if (header.Type == (HeaderType)23) {
+                iReceived = bc.SocketCouple.ClientBridgeSocket.Receive(bBuffer, 0, 0x1000 - Header.TDSHeader.HEADER_SIZE, SocketFlags.None);
+            } else if(header.PayloadSize > 0) {
+                //Console.WriteLine("\t{0:N0} bytes package", header.LengthIncludingHeader);
+                bc.SocketCouple.ClientBridgeSocket.Receive(bBuffer, 0, header.PayloadSize, SocketFlags.None);
+            }
+            TDSPacket tdsPacket = new TDSPacket(bHeader, bBuffer, header.PayloadSize);
+            OnTDSPacketReceived(tdsPacket);
+
+            if (tdsMessage == null)
+                tdsMessage = TDSMessage.CreateFromFirstPacket(tdsPacket);
+            else
+                tdsMessage.Packets.Add(tdsPacket);
+
+            if ((header.StatusBitMask & StatusBitMask.END_OF_MESSAGE) == StatusBitMask.END_OF_MESSAGE) {
+                bc.OnTDSMessageReceived(tdsMessage);
+                tdsMessage = null;
+            }
+
+            SocketCouple.BridgeSQLSocket.Send(bHeader, bHeader.Length, SocketFlags.None);
+
+            if (header.Type == (HeaderType)23) {
+                bc.SocketCouple.BridgeSQLSocket.Send(bBuffer, iReceived, SocketFlags.None);
+            } else {
+                bc.SocketCouple.BridgeSQLSocket.Send(bBuffer, header.PayloadSize, SocketFlags.None);
+            }
+
+            //sc.OutputSocket.Send(bBuffer, header.LengthIncludingHeader, SocketFlags.None);
+            //sc.OutputSocket.Send(bBuffer, iReceived, SocketFlags.None);
+        }
+    }
+    catch (Exception e)
+    {
+        OnBridgeException(ConnectionType.ClientBridge, e);
+    }
+
+    OnConnectionDisconnected(ConnectionType.ClientBridge);
+    //Console.WriteLine("Closing InputThread");
+}
+
+func (bc BridgedConnection) BridgeSQLThread() {
+    try
+    {
+        byte[] bBuffer = new byte[4096];
+        int iReceived = 0;
+
+        while ((iReceived = bc.SocketCouple.BridgeSQLSocket.Receive(bBuffer, SocketFlags.None)) > 0)
+        {
+            TDSHeader header = new TDSHeader(bBuffer);
+
+            //Console.WriteLine("[OUT][" + header.Type.ToString() + "]{" + iReceived + "}");
+
+            bc.SocketCouple.ClientBridgeSocket.Send(bBuffer, iReceived, SocketFlags.None);
+        }
+    }
+    catch (Exception e)
+    {
+        bc.OnBridgeException(ConnectionType.BridgeSQL, e);
+    }
+
+    bc.OnConnectionDisconnected(ConnectionType.BridgeSQL);
+    //Console.WriteLine("Closing OutputThread");
+}
+
+
+func (bc BridgedConnection) OnTDSMessageReceived(Message.TDSMessage msg)
+{
+    bc.BridgeAcceptor.OnTDSMessageReceived(this, msg);
+}
+
+func (bc BridgedConnection) OnTDSPacketReceived(Packet.TDSPacket packet)
+{
+    bc.BridgeAcceptor.OnTDSMessageReceived(this, packet);
+}
+
+func (bc BridgedConnection) OnBridgeException(ConnectionType ct, Exception exce)
+{
+    bc.BridgeAcceptor.OnBridgeException(this, ct, exce);
+}
+
+func (bc BridgedConnection) OnConnectionDisconnected(ConnectionType ct)
+{
+    bc.BridgeAcceptor.OnConnectionDisconnected(this, ct);
+
+    switch (ct)
+    {
+        case bc.ConnectionType.ClientBridge:
+            if(SocketCouple.BridgeSQLSocket.Connected)
+                SocketCouple.BridgeSQLSocket.Disconnect(false);
+            break;
+        case bc.ConnectionType.BridgeSQL:
+            if (SocketCouple.ClientBridgeSocket.Connected)                        
+                SocketCouple.ClientBridgeSocket.Disconnect(false);
+            break;
+    }
+}
+

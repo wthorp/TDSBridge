@@ -1,0 +1,18 @@
+﻿package main
+
+import "net"
+import "fmt"
+
+type SocketCouple struct {
+	ClientBridgeSocket net.Conn
+	BridgeSQLSocket    net.Conn
+}
+
+func (msg SocketCouple) String() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = fmt.Sprintf("[ClientBridgeSocket=%s, BridgeSQLSocket=%s]", msg.ClientBridgeSocket, msg.BridgeSQLSocket)
+		}
+	}()
+	return fmt.Sprintf("[ClientBridgeSocket=%s, BridgeSQLSocket=%s]", msg.ClientBridgeSocket.RemoteAddr(), msg.BridgeSQLSocket.RemoteAddr())
+}

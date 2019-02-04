@@ -1,0 +1,110 @@
+﻿package main
+
+// func TDSMessageReceivedDelegate(BridgedConnection bc, TDSMessage msg);
+// func TDSPacketReceivedDelegate(BridgedConnection bc, TDSPacket packet);
+// func ConnectionAcceptedDelegate(Socket sAccepted);
+// func BridgeExceptionDelegate(BridgedConnection bc, ConnectionType ct, Exception exce);
+// func ListeningThreadExceptionDelegate(Socket sListening, Exception exce);
+// func ConnectionDisconnectedDelegate(BridgedConnection bc, ConnectionType ct);
+
+type BridgeAcceptor struct {
+    SQLServerEndpoint IPEndPoint
+    sAccept Socket
+    tAccept Thread
+    Enabled bool
+    AcceptPort int
+}
+
+func NewBridgeAcceptor(AcceptPort int, SQLServerEndpoint IPEndPoint) *BridgeAcceptor {
+    ba := new(BridgeAcceptor)
+    ba.AcceptPort = AcceptPort
+    ba.SQLServerEndpoint = SQLServerEndpoint
+    return ba
+}
+
+func (ba BridgeAcceptor) Start() {
+    ba.Enabled = true
+    ba.sAccept = newSocket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.IP)
+    ba.sAccept.Bind(new IPEndPoint(System.Net.IPAddress.Any, AcceptPort))
+    ba.sAccept.Listen(16)
+
+    ba.tAccept = new Thread(new ThreadStart(AcceptThread))
+    ba.tAccept.IsBackground = true
+    ba.tAccept.Start()
+}
+
+func (ba BridgeAcceptor) Stop() {
+    ba.Enabled = false
+
+    if ((ba.tAccept != null) && (ba.tAccept.IsAlive)) {
+        if (!ba.tAccept.Join(300))
+            ba.tAccept.Abort()
+        tAccept = null
+    }
+}
+
+func (ba BridgeAcceptor) AcceptThread() {
+    try
+    {
+        while (Enabled)
+        {
+            SocketCouple sc = new SocketCouple();
+
+            ManualResetEvent mre = new ManualResetEvent(false);
+
+            IAsyncResult res= sAccept.BeginAccept(new AsyncCallback((IAsyncResult ia) =>
+                {
+                    bool fic = ia.IsCompleted
+
+                    sc.ClientBridgeSocket = sAccept.EndAccept(ia)
+
+                    OnConnectionAccepted(sc.ClientBridgeSocket)
+
+                    sc.BridgeSQLSocket = new Socket(SQLServerEndpoint.AddressFamily, SocketType.Stream, ProtocolType.IP)
+                    sc.BridgeSQLSocket.Connect(SQLServerEndpoint)
+
+                    BridgedConnection bc = new BridgedConnection(this, sc)
+                    bc.Start()
+                    mre.Set()
+                }), null)
+
+            mre.WaitOne()
+        }
+    }
+    catch (Exception exce)
+    {
+        OnListeningThreadException(sAccept, exce)
+    }
+}
+
+
+func (ba BridgeAcceptor) OnTDSMessageReceived(bc BridgedConnection, msg TDSMessage) {
+    if (ba.TDSMessageReceived != nil)
+        ba.TDSMessageReceived(bc, msg);
+}
+
+func (ba BridgeAcceptor) OnTDSMessageReceived(bc BridgedConnection, packet TDSPacket) {
+    if (ba.TDSPacketReceived != nil)
+        ba.TDSPacketReceived(bc, packet);
+}
+
+func (ba BridgeAcceptor) OnConnectionAccepted(s Socket) {
+    if (ba.ConnectionAccepted != nil)
+        ba.ConnectionAccepted(s);
+}
+
+func (ba BridgeAcceptor) OnListeningThreadException(s Socket, exce Exception) {
+    if (ba.ListeningThreadException != nil)
+        ba.ListeningThreadException(s, exce);
+}
+
+func (ba BridgeAcceptor) OnBridgeException(bc BridgedConnection, ct ConnectionType, exce Exception) {
+    if (ba.BridgeException != nil)
+        ba.BridgeException(bc, ct, exce);
+}
+
+func (ba BridgeAcceptor) OnConnectionDisconnected(bc BridgedConnection, ct ConnectionType) {
+    if (ba.ConnectionDisconnected != nil)
+        ba.ConnectionDisconnected(bc, ct);
+}
+
